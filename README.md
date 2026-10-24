@@ -5,7 +5,7 @@ A beginner-friendly web application that converts natural-language questions int
 🚀 Live Demo
 
 Try the application here:
-"Open SQL in Plain English" [(PASTE_YOUR_STREAMLIT_APP_URL_HERE)
+"Open SQL in Plain English"
 ](https://sql-in-plain-english-kkngxsj5flqwhwqpcuuadn.streamlit.app/)
 Features
 
