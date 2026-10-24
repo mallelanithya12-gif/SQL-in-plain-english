@@ -1,296 +1,317 @@
-
 import re
-import streamlit as st
-import pandas as pd
-from pandas.errors import EmptyDataError
+import sqlite3
 
+import pandas as pd
+import streamlit as st
+
+# ==================================================
+# 1. PAGE CONFIGURATION
+# ==================================================
 st.set_page_config(
     page_title="SQL in Plain English",
-    page_icon="📊",
+    page_icon="✨",
     layout="wide"
 )
 
-# ---------- COLORFUL UI ----------
+# ==================================================
+# 2. COLORFUL UI
+# ==================================================
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(135deg, #eef2ff, #fdf2f8);
+    background: linear-gradient(135deg, #eef2ff 0%, #fdf2f8 100%);
 }
-h1 {
+.main-title {
+    text-align: center;
     color: #4f46e5;
+    font-size: 42px;
+    font-weight: 800;
+}
+.subtitle {
+    text-align: center;
+    color: #475569;
+    font-size: 17px;
 }
 div.stButton > button {
-    background-color: #4f46e5;
+    background: linear-gradient(90deg, #4f46e5, #9333ea);
     color: white;
     border-radius: 10px;
-    font-weight: bold;
+    border: none;
+    font-weight: 600;
+    padding: 9px 16px;
+}
+div.stButton > button:hover {
+    color: white;
+    border: 1px solid #4f46e5;
+}
+[data-testid="stDataFrame"] {
+    border: 1px solid #c7d2fe;
+    border-radius: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 SQL in Plain English")
-st.write("Ask questions about your data using everyday English.")
-
-# ---------- SAMPLE DATA ----------
-sample_data = pd.DataFrame({
-    "name": ["Rahul", "Priya", "Amit", "Sneha"],
-    "marks": [85, 92, 78, 95],
-    "department": ["CSE", "AIML", "CSE", "AIML"]
+# ==================================================
+# 3. SAMPLE STUDENT DATA
+# Replace this data with your actual dataset later.
+# ==================================================
+students = pd.DataFrame({
+    "name": [
+        "Sahana", "Ananya", "Priya", "Rahul",
+        "Sneha", "Arjun", "Kavya", "Rohan"
+    ],
+    "marks": [95, 82, 76, 68, 91, 55, 88, 79],
+    "department": [
+        "AIML", "CSE", "AIML", "ECE",
+        "AIML", "CSE", "AIML", "ECE"
+    ]
 })
 
-# ---------- CSV UPLOAD ----------
-uploaded_file = st.file_uploader(
-    "📁 Upload your CSV file",
-    type=["csv"]
+# ==================================================
+# 4. CREATE SQLITE DATABASE
+# ==================================================
+@st.cache_resource
+def create_database():
+    conn = sqlite3.connect(
+        ":memory:",
+        check_same_thread=False
+    )
+    students.to_sql(
+        "students",
+        conn,
+        index=False,
+        if_exists="replace"
+    )
+    return conn
+
+connection = create_database()
+
+# ==================================================
+# 5. CONVERT ENGLISH TO SQL
+# ==================================================
+def convert_to_sql(question):
+    q = question.lower().strip()
+    q = re.sub(r"[?!.,]+", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+
+    if not q:
+        return None, None, "Please enter a question."
+
+    # Count students
+    if (
+        re.search(r"\b(how many|count|number of)\b", q)
+        and re.search(r"\bstudents?\b", q)
+    ):
+        return (
+            "SELECT COUNT(*) AS total_students FROM students",
+            (),
+            None
+        )
+
+    # Highest marks
+    if (
+        re.search(r"\b(highest|maximum|max)\b", q)
+        and re.search(r"\b(marks?|scores?)\b", q)
+    ):
+        return (
+            """SELECT * FROM students
+               WHERE marks = (
+                   SELECT MAX(marks) FROM students
+               )""",
+            (),
+            None
+        )
+
+    # Above a specified mark
+    match = re.search(
+        r"\b(?:above|greater than|more than|over|higher than)"
+        r"\s+(\d+(?:\.\d+)?)\b",
+        q
+    )
+    if match and re.search(r"\b(marks?|scores?)\b", q):
+        value = float(match.group(1))
+        return (
+            "SELECT * FROM students WHERE marks > ?",
+            (value,),
+            None
+        )
+
+    # Below a specified mark
+    match = re.search(
+        r"\b(?:below|less than|under|lower than)"
+        r"\s+(\d+(?:\.\d+)?)\b",
+        q
+    )
+    if match and re.search(r"\b(marks?|scores?)\b", q):
+        value = float(match.group(1))
+        return (
+            "SELECT * FROM students WHERE marks < ?",
+            (value,),
+            None
+        )
+
+    # Sort marks descending
+    if (
+        re.search(r"\b(sort|order|arrange|rank)\b", q)
+        and re.search(r"\b(marks?|scores?)\b", q)
+        and re.search(
+            r"\b(descending|highest first|high to low)\b", q
+        )
+    ) or re.search(r"\bsort by marks descending\b", q):
+        return (
+            "SELECT * FROM students ORDER BY marks DESC",
+            (),
+            None
+        )
+
+    # Sort marks ascending
+    if (
+        re.search(r"\b(sort|order|arrange)\b", q)
+        and re.search(r"\b(marks?|scores?)\b", q)
+        and re.search(
+            r"\b(ascending|lowest first|low to high)\b", q
+        )
+    ):
+        return (
+            "SELECT * FROM students ORDER BY marks ASC",
+            (),
+            None
+        )
+
+    # Show student names only
+    if (
+        re.search(r"\b(names?|name)\b", q)
+        and re.search(
+            r"\b(show|display|list|get|find)\b", q
+        )
+        and re.search(r"\bstudents?\b", q)
+    ):
+        return (
+            "SELECT name FROM students",
+            (),
+            None
+        )
+
+    # Filter by department
+    dept_match = re.search(
+        r"\b(?:from|in|belonging to)\s+"
+        r"(?:the\s+)?([a-z][a-z0-9 &-]*?)\s+department\b",
+        q
+    )
+    if dept_match:
+        department = dept_match.group(1).strip().upper()
+
+        return (
+            """SELECT * FROM students
+               WHERE UPPER(department) = ?""",
+            (department,),
+            None
+        )
+
+    # Show all students
+    if (
+        re.search(r"\b(show|display|list|get|view)\b", q)
+        and re.search(r"\ball\b", q)
+        and re.search(r"\bstudents?\b", q)
+    ):
+        return (
+            "SELECT * FROM students",
+            (),
+            None
+        )
+
+    return (
+        None,
+        None,
+        "I couldn't understand that question. "
+        "Please try one of the examples below."
+    )
+
+# ==================================================
+# 6. PAGE HEADER
+# ==================================================
+st.markdown(
+    '<div class="main-title">✨ SQL in Plain English</div>',
+    unsafe_allow_html=True
+)
+st.markdown(
+    '<div class="subtitle">'
+    'Convert everyday English questions into SQL queries '
+    'and view the results instantly.'
+    '</div>',
+    unsafe_allow_html=True
 )
 
-if uploaded_file is not None:
-    try:
-        if uploaded_file.size == 0:
-            st.warning("The CSV is empty. Using sample data.")
-            result = sample_data.copy()
-        else:
-            result = pd.read_csv(uploaded_file)
-            if result.empty or len(result.columns) == 0:
-                st.warning("No usable data found. Using sample data.")
-                result = sample_data.copy()
-    except EmptyDataError:
-        st.warning("The CSV has no column headers. Using sample data.")
-        result = sample_data.copy()
-    except Exception as e:
-        st.error(f"Could not read CSV: {e}")
-        result = sample_data.copy()
-else:
-    result = sample_data.copy()
+st.write("")
+st.write("### 💬 Ask Your Question")
 
-if len(result.columns) == 0:
-    st.error("No columns are available.")
-    st.stop()
+# IMPORTANT:
+# Set the input value BEFORE creating the text_input widget.
+if "question" not in st.session_state:
+    st.session_state["question"] = ""
 
-st.subheader("📋 Dataset Preview")
-st.dataframe(result, use_container_width=True)
-
-# ---------- ENGLISH TO SQL ----------
-def english_to_sql(question, df):
-    q = question.lower().strip()
-    q = re.sub(r"[?!.,]+$", "", q)
-    q = re.sub(r"\s+", " ", q)
-
-    # Match columns without depending on capitalization
-    columns = {str(c).lower(): c for c in df.columns}
-
-    def find_column(*names):
-        for name in names:
-            if name in columns:
-                return columns[name]
-        return None
-
-    name_col = find_column("name", "student_name", "student name")
-    marks_col = find_column("marks", "mark", "score", "scores")
-    dept_col = find_column(
-        "department", "dept", "branch"
+if "selected_example" in st.session_state:
+    st.session_state["question"] = st.session_state.pop(
+        "selected_example"
     )
-
-    table = "students"
-
-    # Count records
-    if any(x in q for x in [
-        "how many students", "count students",
-        "total students", "number of students",
-        "count all", "total records", "how many records"
-    ]):
-        return f"SELECT COUNT(*) FROM {table};", "count"
-
-    # Find highest marks
-    if any(x in q for x in [
-        "highest marks", "top scorer",
-        "top student", "maximum marks",
-        "highest score", "best marks"
-    ]):
-        if marks_col is None:
-            return None, "Your data needs a marks or score column."
-        return (
-            f"SELECT * FROM {table} ORDER BY "
-            f'"{marks_col}" DESC LIMIT 1;',
-            "highest"
-        )
-
-    # Find lowest marks
-    if any(x in q for x in [
-        "lowest marks", "lowest score",
-        "minimum marks", "minimum score"
-    ]):
-        if marks_col is None:
-            return None, "Your data needs a marks or score column."
-        return (
-            f'SELECT * FROM {table} ORDER BY "{marks_col}" ASC LIMIT 1;',
-            "lowest"
-        )
-
-    # Filter by marks or scores
-    if marks_col and any(x in q for x in [
-        "mark", "score", "scored", "marks", "scoring"
-    ]):
-        match = re.search(
-            r"(?:greater than|more than|above|over|"
-            r"less than|below|under|equal to|at least|"
-            r"at most)\s+(\d+(?:\.\d+)?)",
-            q
-        )
-
-        if match:
-            number = float(match.group(1))
-            phrase = match.group(0)
-
-            if phrase.startswith(("greater", "more", "above", "over")):
-                operator = ">"
-                mask = pd.to_numeric(
-                    df[marks_col], errors="coerce"
-                ) > number
-            elif phrase.startswith(("less", "below", "under")):
-                operator = "<"
-                mask = pd.to_numeric(
-                    df[marks_col], errors="coerce"
-                ) < number
-            elif phrase.startswith("equal"):
-                operator = "="
-                mask = pd.to_numeric(
-                    df[marks_col], errors="coerce"
-                ) == number
-            elif phrase.startswith("at least"):
-                operator = ">="
-                mask = pd.to_numeric(
-                    df[marks_col], errors="coerce"
-                ) >= number
-            else:
-                operator = "<="
-                mask = pd.to_numeric(
-                    df[marks_col], errors="coerce"
-                ) <= number
-
-            sql = (
-                f'SELECT * FROM {table} WHERE '
-                f'"{marks_col}" {operator} {number:g};'
-            )
-            return sql, df[mask]
-
-    # Filter by department or branch
-    if dept_col and any(x in q for x in [
-        "department", "branch", "dept"
-    ]):
-        for value in df[dept_col].dropna().unique():
-            value = str(value)
-            if value.lower() in q:
-                safe_value = value.replace("'", "''")
-                sql = (
-                    f'SELECT * FROM {table} WHERE '
-                    f'"{dept_col}" = \'{safe_value}\';'
-                )
-                return sql, df[
-                    df[dept_col].astype(str).str.lower()
-                    == value.lower()
-                ]
-
-    # Show only names
-    if name_col and any(x in q for x in [
-        "show names", "list names", "student names",
-        "display names", "only names"
-    ]):
-        return f'SELECT "{name_col}" FROM {table};', df[[name_col]]
-
-    # Sort marks
-    if marks_col and any(x in q for x in [
-        "sort by marks", "order by marks",
-        "marks descending", "rank students",
-        "sort marks", "arrange by marks"
-    ]):
-        descending = not any(x in q for x in [
-            "ascending", "lowest first", "smallest first"
-        ])
-        direction = "DESC" if descending else "ASC"
-        sorted_df = df.sort_values(
-            by=marks_col, ascending=not descending
-        )
-        sql = (
-            f'SELECT * FROM {table} ORDER BY '
-            f'"{marks_col}" {direction};'
-        )
-        return sql, sorted_df
-
-    # Show all rows
-    if any(x in q for x in [
-        "show all", "all students", "display all",
-        "show students", "list students",
-        "show records", "display records",
-        "all records", "everything"
-    ]):
-        return f"SELECT * FROM {table};", df
-
-    return None, (
-        "I couldn't understand that question. "
-        "Try one of the example questions below."
-    )
-
-# ---------- QUESTION INPUT ----------
-st.subheader("💬 Ask in Plain English")
 
 question = st.text_input(
     "Type your question",
-    placeholder="Example: Show students who scored above 80 marks"
+    placeholder="e.g. Show students who scored above 80 marks",
+    key="question"
 )
 
-st.caption("Example: Show all students | Count students | Highest marks")
+# ==================================================
+# 7. CONVERT BUTTON AND DISPLAY RESULTS
+# ==================================================
+if st.button("✨ Convert to SQL", key="convert_button"):
+    sql, params, error = convert_to_sql(question)
 
-if st.button("✨ Convert to SQL"):
-    if not question.strip():
-        st.warning("Please enter a question first.")
+    if error:
+        st.warning(error)
+
     else:
-        sql, output = english_to_sql(question, result)
+        st.success("Question understood successfully!")
 
-        if sql is None:
-            st.info(output)
-        else:
-            st.markdown("### 🔍 Generated SQL Query")
-            st.code(sql, language="sql")
+        st.markdown("### 🧾 Generated SQL Query")
+        st.code(sql, language="sql")
 
-            st.markdown("### 📖 Explanation")
-            st.write(
-                "This query retrieves the records requested "
-                "by your question from the students dataset."
+        try:
+            result = pd.read_sql_query(
+                sql,
+                connection,
+                params=params
             )
 
             st.markdown("### 📊 Query Result")
 
-            if output == "count":
-                st.metric("Total records", len(result))
-            elif isinstance(output, pd.DataFrame):
-                st.dataframe(output, use_container_width=True)
-            elif output == "highest":
+            if result.empty:
+                st.info("No matching students found.")
+
+            else:
+                if "total_students" in result.columns:
+                    st.metric(
+                        "Total Students",
+                        int(result.iloc[0]["total_students"])
+                    )
+                else:
+                    st.caption(
+                        f"Found {len(result)} result(s)."
+                    )
+
                 st.dataframe(
-                    result.nlargest(
-                        1, next(
-                            c for c in result.columns
-                            if str(c).lower() in [
-                                "marks", "mark", "score", "scores"
-                            ]
-                        )
-                    ),
-                    use_container_width=True
-                )
-            elif output == "lowest":
-                st.dataframe(
-                    result.nsmallest(
-                        1, next(
-                            c for c in result.columns
-                            if str(c).lower() in [
-                                "marks", "mark", "score", "scores"
-                            ]
-                        )
-                    ),
-                    use_container_width=True
+                    result,
+                    use_container_width=True,
+                    hide_index=True
                 )
 
-# ---------- EXAMPLE QUESTIONS ----------
+        except Exception as exc:
+            st.error(f"SQL execution error: {exc}")
+
+# ==================================================
+# 8. EXAMPLE QUESTIONS
+# ==================================================
+st.divider()
 st.markdown("### 💡 Try These Questions")
 
 examples = [
@@ -304,7 +325,22 @@ examples = [
     "Sort by marks descending"
 ]
 
-for example in examples:
-    st.markdown(f"- {example}")
+# Each example has a unique button key.
+# Selection is stored separately and applied before
+# the text input is created on the next rerun.
+for index, example in enumerate(examples):
+    if st.button(
+        f"➡️ {example}",
+        key=f"example_{index}",
+        use_container_width=True
+    ):
+        st.session_state["selected_example"] = example
+        st.rerun()
 
-st.caption("Mini Project | Python • Pandas • Streamlit")
+# ==================================================
+# 9. FOOTER
+# ==================================================
+st.divider()
+st.caption(
+    "Mini Project | Python • Pandas • SQLite • Streamlit"
+)
